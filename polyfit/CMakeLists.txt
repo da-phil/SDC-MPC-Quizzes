@@ -9,10 +9,15 @@ add_definitions(-std=c++11)
 set(CXX_FLAGS "-Wall")
 set(CMAKE_CXX_FLAGS, "${CXX_FLAGS}")
 
+find_package(Eigen3)
+
+include_directories(
+    ${EIGEN3_INCLUDE_DIR}
+    /usr/local/include
+)
+
 set(sources src/main.cpp)
 
-include_directories(/usr/local/include)
-include_directories(src/Eigen-3.3)
 link_directories(/usr/local/lib)
 
 add_executable(polyfit ${sources})

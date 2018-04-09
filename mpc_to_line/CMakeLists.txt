@@ -9,16 +9,20 @@ add_definitions(-std=c++11)
 set(CXX_FLAGS "-Wall")
 set(CMAKE_CXX_FLAGS, "${CXX_FLAGS}")
 
-set(sources src/MPC.cpp)
+find_package(Eigen3)
 
-include_directories(src/Eigen-3.3)
-include_directories(/usr/local/include)
+include_directories(
+    ${EIGEN3_INCLUDE_DIR}
+    /usr/local/include
+)
+
 link_directories(/usr/local/lib)
 
+set(sources src/MPC.cpp)
 add_executable(mpc ${sources})
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-target_link_libraries(mpc ipopt python2.7)
+    target_link_libraries(mpc ipopt python2.7)
 else()
-target_link_libraries(mpc ipopt python)
+    target_link_libraries(mpc ipopt python)
 endif()
