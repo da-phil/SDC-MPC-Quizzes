@@ -2,8 +2,8 @@
 #include <math.h>
 #include <cppad/cppad.hpp>
 #include <cppad/ipopt/solve.hpp>
-#include "Eigen-3.3/Eigen/Core"
-#include "Eigen-3.3/Eigen/QR"
+#include <Eigen/Core>
+#include <Eigen/QR>
 #include "matplotlibcpp.h"
 
 namespace plt = matplotlibcpp;
@@ -11,8 +11,8 @@ namespace plt = matplotlibcpp;
 using CppAD::AD;
 
 // TODO: Set N and dt
-size_t N = ? ;
-double dt = ? ;
+size_t N = 25;
+double dt = 0.05;
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -29,6 +29,11 @@ const double Lf = 2.67;
 // NOTE: feel free to play around with this
 // or do something completely different
 double ref_v = 40;
+
+double max_steer_rad =  0.436332; // which is 25 degrees
+
+double min_accel = -0.5;
+double max_accel =  1.0;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -60,6 +65,29 @@ class FG_eval {
     // TODO: Define the cost related the reference state and
     // any anything you think may be beneficial.
 
+    // The part of the cost based on the reference state:
+    // - penalize increasing CTE
+    // - penalize heading error (epsi)
+    // - penalize deviation from reference velocity (ref_v)
+    for (int t = 0; t < N; t++) {
+      fg[0] += CppAD::pow(vars[cte_start + t], 2);
+      fg[0] += CppAD::pow(vars[epsi_start + t], 2);
+      fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);
+    }
+
+    // Minimize the use of actuators.
+    for (int t = 0; t < N - 1; t++) {
+      fg[0] += CppAD::pow(vars[delta_start + t], 2);
+      fg[0] += CppAD::pow(vars[a_start + t], 2);
+    }
+
+    // Minimize the value gap between sequential actuations.
+    for (int t = 0; t < N - 2; t++) {
+      fg[0] += 500*CppAD::pow((vars[delta_start + t + 1] - vars[delta_start + t]), 2);
+      fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+    }
+
+
     //
     // Setup Constraints
     //
@@ -79,11 +107,28 @@ class FG_eval {
 
     // The rest of the constraints
     for (int t = 1; t < N; t++) {
+      // The state at time t+1 .
       AD<double> x1 = vars[x_start + t];
+      AD<double> y1 = vars[y_start + t];
+      AD<double> psi1 = vars[psi_start + t];
+      AD<double> v1 = vars[v_start + t];
+      AD<double> cte1 = vars[cte_start + t];
+      AD<double> epsi1 = vars[epsi_start + t];
 
+      // The state at time t
       AD<double> x0 = vars[x_start + t - 1];
       AD<double> psi0 = vars[psi_start + t - 1];
       AD<double> v0 = vars[v_start + t - 1];
+      AD<double> y0 = vars[y_start + t - 1];
+      AD<double> cte0 = vars[cte_start + t - 1];
+      AD<double> epsi0 = vars[epsi_start + t - 1];
+
+      // Only consider the actuation at time t.
+      AD<double> delta0 = vars[delta_start + t - 1];
+      AD<double> a0 = vars[a_start + t - 1];
+
+      AD<double> f0 = coeffs[0] + coeffs[1] * x0;
+      AD<double> psides0 = CppAD::atan(coeffs[1]);
 
       // Here's `x` to get you started.
       // The idea here is to constraint this value to be 0.
@@ -93,7 +138,13 @@ class FG_eval {
       // these to the solver.
 
       // TODO: Setup the rest of the model constraints
-      fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+      fg[1 + x_start + t]     = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+      fg[1 + y_start + t]     = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+      fg[1 + psi_start + t]   = psi1 - (psi0 + v0 * delta0 / Lf * dt);  
+      fg[1 + v_start + t]     = v1 - (v0 + a0 * dt);
+      fg[1 + cte_start + t]   = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
+      fg[1 + epsi_start + t]  = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
+      
     }
   }
 };
@@ -151,15 +202,15 @@ vector<double> MPC::Solve(Eigen::VectorXd x0, Eigen::VectorXd coeffs) {
   // degrees (values in radians).
   // NOTE: Feel free to change this to something else.
   for (int i = delta_start; i < a_start; i++) {
-    vars_lowerbound[i] = -0.436332;
-    vars_upperbound[i] = 0.436332;
+    vars_lowerbound[i] = -max_steer_rad;
+    vars_upperbound[i] =  max_steer_rad;
   }
 
   // Acceleration/decceleration upper and lower limits.
   // NOTE: Feel free to change this to something else.
   for (int i = a_start; i < n_vars; i++) {
-    vars_lowerbound[i] = -1.0;
-    vars_upperbound[i] = 1.0;
+    vars_lowerbound[i] = min_accel;
+    vars_upperbound[i] = max_accel;
   }
 
   // Lower and upper limits for constraints
@@ -253,9 +304,10 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
   return result;
 }
 
+
 int main() {
   MPC mpc;
-  int iters = 50;
+  int iters = 70;
 
   Eigen::VectorXd ptsx(2);
   Eigen::VectorXd ptsy(2);
@@ -263,17 +315,22 @@ int main() {
   ptsy << -1, -1;
 
   // TODO: fit a polynomial to the above x and y coordinates
-  auto coeffs = ? ;
+  auto coeffs = polyfit(ptsx, ptsy, 1);
+  std::cout << "coeffs: " << coeffs << std::endl;
 
   // NOTE: free feel to play around with these
   double x = -1;
   double y = 10;
   double psi = 0;
   double v = 10;
+  
   // TODO: calculate the cross track error
-  double cte = ? ;
+  double cte =  polyeval(coeffs, x) - y;
+
   // TODO: calculate the orientation error
-  double epsi = ? ;
+  // Due to the sign starting at 0, the orientation error is -f'(x).
+  // derivative of coeffs[0] + coeffs[1] * x -> coeffs[1]
+  double epsi = psi - atan(coeffs[1]);
 
   Eigen::VectorXd state(6);
   state << x, y, psi, v, cte, epsi;
@@ -317,15 +374,28 @@ int main() {
   // Plot values
   // NOTE: feel free to play around with this.
   // It's useful for debugging!
+  /*
+  plt::figure();
+  plt::title("Trajectory");
+  plt::plot(x_vals, y_vals);
+  plt::grid(true);
+  plt::show();
+  */
+  plt::figure();
   plt::subplot(3, 1, 1);
   plt::title("CTE");
   plt::plot(cte_vals);
+  plt::grid(true);
+
   plt::subplot(3, 1, 2);
   plt::title("Delta (Radians)");
   plt::plot(delta_vals);
+  plt::grid(true);
+
   plt::subplot(3, 1, 3);
   plt::title("Velocity");
   plt::plot(v_vals);
+  plt::grid(true);
 
   plt::show();
-}
+}  
